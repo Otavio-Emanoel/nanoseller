@@ -47,6 +47,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         try {
+            if (!jwtService.isAccessToken(token)) {
+                filterChain.doFilter(request, response);
+                return;
+            }
             AuthenticatedUser user = jwtService.parseUser(token);
 
             if (user.role() == null || user.role().isBlank()) {
