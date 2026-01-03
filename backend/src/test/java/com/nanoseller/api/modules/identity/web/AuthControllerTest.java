@@ -5,27 +5,31 @@ import com.nanoseller.api.modules.identity.domain.User;
 import com.nanoseller.api.modules.identity.infra.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.client.RestClient;
 
 import java.util.Map;
 import java.util.UUID;
 
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
-@SpringBootTest
-@AutoConfigureMockMvc
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class AuthControllerTest {
 
-    @Autowired MockMvc mockMvc;
+    @Value("${local.server.port}")
+    int port;
+
     @Autowired ObjectMapper objectMapper;
     @Autowired UserRepository userRepository;
     @Autowired PasswordEncoder passwordEncoder;
+
+    private RestClient restClient() {
+        return RestClient.builder()
+                .baseUrl("http://localhost:" + port)
+                .build();
+    }
 
     @Test
     void loginAndRefreshFlow() throws Exception {
@@ -38,32 +42,37 @@ class AuthControllerTest {
         user.setPasswordHash(passwordEncoder.encode("123456"));
         userRepository.save(user);
 
-        String loginBody = objectMapper.writeValueAsString(Map.of(
+        Map<String, Object> loginBody = Map.of(
                 "email", "admin@loja.com",
                 "password", "123456",
                 "tenantId", tenantId.toString()
-        ));
+        );
 
-        String loginResponse = mockMvc.perform(post("/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(loginBody))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.accessToken").isNotEmpty())
-                .andExpect(jsonPath("$.refreshToken").isNotEmpty())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
+        ResponseEntity<String> loginResponse = restClient()
+            .post()
+            .uri("/auth/login")
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(loginBody)
+            .retrieve()
+            .toEntity(String.class);
+        assert loginResponse.getStatusCode().value() == 200;
 
-        String refreshToken = objectMapper.readTree(loginResponse).get("refreshToken").asText();
+        String accessToken = objectMapper.readTree(loginResponse.getBody()).get("accessToken").asText();
+        String refreshToken = objectMapper.readTree(loginResponse.getBody()).get("refreshToken").asText();
+        assert accessToken != null && !accessToken.isBlank();
+        assert refreshToken != null && !refreshToken.isBlank();
 
-        String refreshBody = objectMapper.writeValueAsString(Map.of(
-                "refreshToken", refreshToken
-        ));
+        Map<String, Object> refreshBody = Map.of("refreshToken", refreshToken);
+        ResponseEntity<String> refreshResponse = restClient()
+            .post()
+            .uri("/auth/refresh")
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(refreshBody)
+            .retrieve()
+            .toEntity(String.class);
+        assert refreshResponse.getStatusCode().value() == 200;
 
-        mockMvc.perform(post("/auth/refresh")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(refreshBody))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.accessToken").isNotEmpty());
+        String newAccessToken = objectMapper.readTree(refreshResponse.getBody()).get("accessToken").asText();
+        assert newAccessToken != null && !newAccessToken.isBlank();
     }
 }
